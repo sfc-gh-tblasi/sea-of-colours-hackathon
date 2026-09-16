@@ -1095,6 +1095,7 @@ def build_prompt(
     player_count: int = 0,
     think_analysis: str = "",
     coverage_note: str = "",
+    opponent_read_block: str = "",
 ) -> str:
     """Assemble the tabula_v11 prompt as three labelled worldview sections.
 
@@ -1194,6 +1195,8 @@ def build_prompt(
         parts += [emp_scars_block, "\n"]
     if opponent_block:
         parts += [opponent_block, "\n"]
+    if opponent_read_block:
+        parts += [opponent_read_block, "\n"]
     if weapons_block:
         parts += [weapons_block]
     if geometry_block:

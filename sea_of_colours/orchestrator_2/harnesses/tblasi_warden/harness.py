@@ -79,6 +79,7 @@ from sea_of_colours.orchestrator_2.harnesses.tblasi_warden import (
     journal as journal_mod,
     last_night as last_night_mod,
     option_economics as econ_mod,
+    opponent_read as opponent_read_mod,
     orbit as orbit_mod,
     packager,
     seam_control as seam_control_mod,
@@ -407,6 +408,17 @@ def run(
         session_id, player, agent_view,
         day=day, store=store, season_name=season_name,
     )
+    # tblasi_warden — deterministic opponent read: enemy VISION map (cells a
+    # rival probe lights NOW vs ground it USED TO see), a 0..1 field-aggression
+    # score, and an eco/attack stance. Computed once here, AFTER this turn's
+    # public enemy-probe launches are folded into the season record so the
+    # vision map is current. Consumed by the prompt (a terse OPPONENT READ
+    # block), the blue gate, and orbit buying. Never raises — a bad read
+    # degrades to "nothing known".
+    opp_read = opponent_read_mod.read(
+        agent_view, session_id=session_id, player=player, day=int(day),
+        store=store,
+    )
     _anchored_labels = {"redsign", "blue_sign", "echo", "seam_extension"}
     anchored_probes = [
         h for h in probe_hints_mod.top_probe_hints(
@@ -524,7 +536,12 @@ def run(
     # rather than the shared wishlist tag, which tests for an "empty" band the
     # engine never emits and so asked for blue on a vault holding 80 while
     # staying silent on a vault holding nothing.
-    want_blue = prompt_mod.blue_is_requested(agent_view)
+    # An attack stance tilts toward harvesting BLUE currency — the only use for
+    # blue is ordnance, and a fork that intends to fire weapons needs the
+    # currency to arm. Eco leaves the engine's own vault-band request in charge.
+    want_blue = prompt_mod.blue_is_requested(agent_view) or (
+        opp_read.stance == "attack"
+    )
     blue_hints = (
         heuristic_chains.top_blue_chain_hints(agent_view, max_chains=2)
         if want_blue else []
@@ -580,6 +597,7 @@ def run(
         opponent_weapon_estimates=weapon_estimates,
         prior_day_entry=prior_day_entry,
         last_night_block=last_night_block,
+        opponent_read_block=opp_read.prompt_block(),
     )
 
     # 4b. CONTAINED THINKER (reasoning-first, inference API, hard cap).

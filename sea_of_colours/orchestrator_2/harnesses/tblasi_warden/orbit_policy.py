@@ -37,7 +37,7 @@ Known holes, left deliberately (they are the exercise):
 from __future__ import annotations
 
 import random as _random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Mapping, Tuple
 
 from sea_of_colours.game.session import (
@@ -121,6 +121,33 @@ class OrbitDials:
 DEFAULT_DIALS = OrbitDials()
 
 
+def _stance_dials(base: OrbitDials, stance: str) -> OrbitDials:
+    """Retune the WEAPON dials for an eco or attack stance (tblasi_warden).
+
+    Attack raises weapon appetite — higher stockpile caps and an eager EMP roll
+    at a lower blue threshold — so a fork that means to fight actually builds a
+    rack. Eco starves speculative ordnance (no EMP roll, a higher always-build
+    floor) so the credits flow to probes and fleet instead. The economy dials
+    (probe target, prices, fleet cap) are deliberately left untouched.
+    """
+    if stance == "attack":
+        return replace(
+            base,
+            emp_stockpile_cap=max(base.emp_stockpile_cap, 3),
+            chaff_stockpile_cap=max(base.chaff_stockpile_cap, 2),
+            blue_emp_roll=min(base.blue_emp_roll, 200),
+            emp_roll_chance=max(base.emp_roll_chance, 0.8),
+        )
+    if stance == "eco":
+        return replace(
+            base,
+            emp_stockpile_cap=min(base.emp_stockpile_cap, 1),
+            blue_always_build=max(base.blue_always_build, 400),
+            emp_roll_chance=0.0,
+        )
+    return base
+
+
 # ── View readers ──────────────────────────────────────────────────
 #
 # Copied in rather than imported so the fork owns its whole orbit path
@@ -186,6 +213,8 @@ def plan_orbit_actions(
     *,
     weapons_enabled: bool = True,
     dials: OrbitDials = DEFAULT_DIALS,
+    stance: "str | None" = None,
+    opp_armed: bool = False,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Plan this seat's orbit submission (RULEBOOK §4).
 
@@ -206,7 +235,15 @@ def plan_orbit_actions(
 
     ``weapons_enabled=False`` is the no-weapons tutorial opponent
     (RED_HARVEST_LITE) — it skips priority 3 and changes nothing else.
+
+    ``stance`` (``"eco"``|``"attack"``|``None``) and ``opp_armed`` make the buy
+    board-aware (tblasi_warden). ``stance=None`` is byte-identical to the
+    shipped board-blind policy, so the differential parity test is unaffected;
+    a stance retunes the weapon dials (attack arms harder, eco pours credits
+    into vision), and an armed rival guarantees one defensive chaff.
     """
+    if stance is not None:
+        dials = _stance_dials(dials, stance)
     orbit = view.get("orbit") or {}
     credits = int(orbit.get("credits", 0))
     cap_used = int(orbit.get("harvester_cap_used", 0))
@@ -318,6 +355,23 @@ def plan_orbit_actions(
             blue_total >= chaff_blue_cost
             and remaining >= chaff_credit_cost
             and _room_for(chaff_blue_cost)
+        )
+
+    # tblasi_warden defensive rule: an armed rival can jam our egress hours
+    # (RULEBOOK §5); one chaff is the cheapest insurance (credit-free) and, unlike
+    # the appetite bands below, does not wait on a blue surplus.
+    if (
+        weapons_enabled
+        and opp_armed
+        and chaff_stock < 1
+        and _afford_chaff()
+        and not any(a.get("a") == "build_chaff" for a in actions)
+    ):
+        actions.append({"a": "build_chaff", "count": 1})
+        remaining -= chaff_credit_cost
+        chaff_stock += 1
+        descriptors.append(
+            "built defensive CHAFF (armed rival; egress-jam insurance)"
         )
 
     if weapons_enabled and not _room_for(min(emp_blue_cost, chaff_blue_cost)):

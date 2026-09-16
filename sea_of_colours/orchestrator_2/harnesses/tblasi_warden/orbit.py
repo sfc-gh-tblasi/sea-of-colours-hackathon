@@ -28,6 +28,9 @@ import time
 from typing import Any, Dict, List, Mapping, Tuple
 
 from sea_of_colours.snowpark import engine as soc_engine
+from sea_of_colours.orchestrator_2.harnesses.tblasi_warden import (
+    opponent_read as opponent_read_mod,
+)
 
 INNER_AGENT_LABEL = "TBLASI_WARDEN"
 
@@ -164,7 +167,29 @@ def submit_orbit(
         # mint turns the switch back on. Set it to False again if you would
         # rather spend the credits on vision. Just make that your decision
         # rather than something you inherited without being told.
-        actions, rationale = plan_orbit_actions(agent_view)
+        # tblasi_warden — read the board so buying is stance-aware. Guarded:
+        # any failure falls back to the board-blind baseline (stance=None).
+        stance = None
+        opp_armed = False
+        try:
+            _hud = agent_view.get("hud") or {}
+            _meta = agent_view.get("meta") or {}
+            _day = int(_meta.get("day") or _hud.get("day") or 0)
+            _read = opponent_read_mod.read(
+                agent_view, session_id=session_id, player=player,
+                day=_day, store=store,
+            )
+            stance = _read.stance
+            opp_armed = _read.aggression.label == "aggressive" or any(
+                s.get("could_emp") or s.get("could_chaff")
+                or s.get("could_snap") or s.get("fired")
+                for s in _read.aggression.per_seat.values()
+            )
+        except Exception:
+            stance, opp_armed = None, False
+        actions, rationale = plan_orbit_actions(
+            agent_view, stance=stance, opp_armed=opp_armed,
+        )
         hud = agent_view.get("hud") or {}
         meta = agent_view.get("meta") or {}
         day = int(meta.get("day") or hud.get("day") or 0)
